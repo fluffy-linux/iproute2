@@ -14,8 +14,13 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <glob.h>
 #include <limits.h>
 #include <errno.h>
+
+#ifndef CONF_VENDOR_DIR
+#define CONF_VENDOR_DIR CONF_USR_DIR
+#endif
 
 #include <asm/types.h>
 #include <linux/rtnetlink.h>
@@ -201,18 +206,93 @@ rtnl_tabhash_readdir(const char *dirpath_base, const char *dirpath_overload,
 }
 
 static void
+rtnl_tab_initialize_multi(const char *rel, char **tab, int size)
+{
+	char pattern[PATH_MAX * 2];
+	glob_t gl;
+
+	snprintf(pattern, sizeof(pattern),
+		 "%s/%s:%s/%s:%s/%s",
+		 CONF_VENDOR_DIR, rel, CONF_USR_DIR, rel, CONF_ETC_DIR, rel);
+	memset(&gl, 0, sizeof(gl));
+	if (glob(pattern, GLOB_PATHS | GLOB_NOESCAPE, NULL, &gl) == 0) {
+		size_t i, j;
+		for (i = 0; i < gl.gl_pathc; i++) {
+			int dup = 0;
+			if (strcmp(gl.gl_pathv[i], ".") == 0)
+				continue;
+			for (j = 0; j < i; j++) {
+				if (strcmp(gl.gl_pathv[i], gl.gl_pathv[j]) == 0) {
+					dup = 1;
+					break;
+				}
+			}
+			if (!dup)
+				rtnl_tab_initialize(gl.gl_pathv[i], tab, size);
+		}
+	}
+	globfree(&gl);
+}
+
+static void
+rtnl_hash_initialize_multi(const char *rel, struct rtnl_hash_entry **hash,
+			   int size)
+{
+	char pattern[PATH_MAX * 2];
+	glob_t gl;
+
+	snprintf(pattern, sizeof(pattern),
+		 "%s/%s:%s/%s:%s/%s",
+		 CONF_VENDOR_DIR, rel, CONF_USR_DIR, rel, CONF_ETC_DIR, rel);
+	memset(&gl, 0, sizeof(gl));
+	if (glob(pattern, GLOB_PATHS | GLOB_NOESCAPE, NULL, &gl) == 0) {
+		size_t i, j;
+		for (i = 0; i < gl.gl_pathc; i++) {
+			int dup = 0;
+			if (strcmp(gl.gl_pathv[i], ".") == 0)
+				continue;
+			for (j = 0; j < i; j++) {
+				if (strcmp(gl.gl_pathv[i], gl.gl_pathv[j]) == 0) {
+					dup = 1;
+					break;
+				}
+			}
+			if (!dup)
+				rtnl_hash_initialize(gl.gl_pathv[i], hash, size);
+		}
+	}
+	globfree(&gl);
+}
+
+static void
 rtnl_tabhash_initialize_dir(const char *ddir, const struct tabhash tabhash, const int size)
 {
-	char dirpath_usr[PATH_MAX], dirpath_etc[PATH_MAX];
+	char pattern[PATH_MAX * 2], dirpath_etc[PATH_MAX];
+	glob_t gl;
 
-	snprintf(dirpath_usr, sizeof(dirpath_usr), "%s/%s", CONF_USR_DIR, ddir);
 	snprintf(dirpath_etc, sizeof(dirpath_etc), "%s/%s", CONF_ETC_DIR, ddir);
+	snprintf(pattern, sizeof(pattern),
+		 "%s/%s:%s/%s", CONF_VENDOR_DIR, ddir, CONF_USR_DIR, ddir);
 
-	/*
-	 * load CONF_USR_DIR/iproute2/foo.d/X conf files
-	 * unless CONF_ETC_DIR/iproute2/foo.d/X exists
-	 */
-	rtnl_tabhash_readdir(dirpath_usr, dirpath_etc, tabhash, size);
+	memset(&gl, 0, sizeof(gl));
+	if (glob(pattern, GLOB_PATHS | GLOB_NOESCAPE, NULL, &gl) == 0) {
+		size_t i, j;
+		for (i = 0; i < gl.gl_pathc; i++) {
+			int dup = 0;
+			if (strcmp(gl.gl_pathv[i], ".") == 0 ||
+			    strcmp(gl.gl_pathv[i], dirpath_etc) == 0)
+				continue;
+			for (j = 0; j < i; j++) {
+				if (strcmp(gl.gl_pathv[i], gl.gl_pathv[j]) == 0) {
+					dup = 1;
+					break;
+				}
+			}
+			if (!dup)
+				rtnl_tabhash_readdir(gl.gl_pathv[i], dirpath_etc, tabhash, size);
+		}
+	}
+	globfree(&gl);
 
 	/* load /etc/iproute2/foo.d/X conf files */
 	rtnl_tabhash_readdir(dirpath_etc, NULL, tabhash, size);
@@ -236,14 +316,8 @@ static int rtnl_rtprot_init;
 
 static void rtnl_rtprot_initialize(void)
 {
-	int ret;
-
 	rtnl_rtprot_init = 1;
-	ret = rtnl_tab_initialize(CONF_ETC_DIR "/rt_protos",
-				  rtnl_rtprot_tab, 256);
-	if (ret == -ENOENT)
-		rtnl_tab_initialize(CONF_USR_DIR "/rt_protos",
-				    rtnl_rtprot_tab, 256);
+	rtnl_tab_initialize_multi("rt_protos", rtnl_rtprot_tab, 256);
 
 	rtnl_tab_initialize_dir("rt_protos.d", rtnl_rtprot_tab, 256);
 }
@@ -307,17 +381,9 @@ static bool rtnl_addrprot_tab_initialized;
 
 static void rtnl_addrprot_initialize(void)
 {
-	int ret;
-
 	rtnl_addrprot_tab_initialized = true;
-
-	ret = rtnl_tab_initialize(CONF_ETC_DIR "/rt_addrprotos",
-				  rtnl_addrprot_tab,
+	rtnl_tab_initialize_multi("rt_addrprotos", rtnl_addrprot_tab,
 				  ARRAY_SIZE(rtnl_addrprot_tab));
-	if (ret == -ENOENT)
-		ret = rtnl_tab_initialize(CONF_USR_DIR "/rt_addrprotos",
-					  rtnl_addrprot_tab,
-					  ARRAY_SIZE(rtnl_addrprot_tab));
 
 	rtnl_tab_initialize_dir("rt_addrprotos.d", rtnl_addrprot_tab,
 				ARRAY_SIZE(rtnl_addrprot_tab));
@@ -373,14 +439,8 @@ static int rtnl_rtscope_init;
 
 static void rtnl_rtscope_initialize(void)
 {
-	int ret;
-
 	rtnl_rtscope_init = 1;
-	ret = rtnl_tab_initialize(CONF_ETC_DIR "/rt_scopes",
-				  rtnl_rtscope_tab, 256);
-	if (ret == -ENOENT)
-		rtnl_tab_initialize(CONF_USR_DIR "/rt_scopes",
-				    rtnl_rtscope_tab, 256);
+	rtnl_tab_initialize_multi("rt_scopes", rtnl_rtscope_tab, 256);
 }
 
 const char *rtnl_rtscope_n2a(int id, char *buf, int len)
@@ -443,14 +503,8 @@ static int rtnl_rtrealm_init;
 
 static void rtnl_rtrealm_initialize(void)
 {
-	int ret;
-
 	rtnl_rtrealm_init = 1;
-	ret = rtnl_tab_initialize(CONF_ETC_DIR "/rt_realms",
-				  rtnl_rtrealm_tab, 256);
-	if (ret == -ENOENT)
-		rtnl_tab_initialize(CONF_USR_DIR "/rt_realms",
-				    rtnl_rtrealm_tab, 256);
+	rtnl_tab_initialize_multi("rt_realms", rtnl_rtrealm_tab, 256);
 }
 
 const char *rtnl_rtrealm_n2a(int id, char *buf, int len)
@@ -518,18 +572,13 @@ static int rtnl_rttable_init;
 static void rtnl_rttable_initialize(void)
 {
 	int i;
-	int ret;
 
 	rtnl_rttable_init = 1;
 	for (i = 0; i < 256; i++) {
 		if (rtnl_rttable_hash[i])
 			rtnl_rttable_hash[i]->id = i;
 	}
-	ret = rtnl_hash_initialize(CONF_ETC_DIR "/rt_tables",
-				   rtnl_rttable_hash, 256);
-	if (ret == -ENOENT)
-		rtnl_hash_initialize(CONF_USR_DIR "/rt_tables",
-				     rtnl_rttable_hash, 256);
+	rtnl_hash_initialize_multi("rt_tables", rtnl_rttable_hash, 256);
 
 	rtnl_hash_initialize_dir("rt_tables.d", rtnl_rttable_hash, 256);
 }
@@ -593,14 +642,8 @@ static int rtnl_rtdsfield_init;
 
 static void rtnl_rtdsfield_initialize(void)
 {
-	int ret;
-
 	rtnl_rtdsfield_init = 1;
-	ret = rtnl_tab_initialize(CONF_ETC_DIR "/rt_dsfield",
-				  rtnl_rtdsfield_tab, 256);
-	if (ret == -ENOENT)
-		rtnl_tab_initialize(CONF_USR_DIR "/rt_dsfield",
-				    rtnl_rtdsfield_tab, 256);
+	rtnl_tab_initialize_multi("rt_dsfield", rtnl_rtdsfield_tab, 256);
 }
 
 const char *rtnl_dsfield_n2a(int id, char *buf, int len)
@@ -700,14 +743,8 @@ static int rtnl_group_init;
 
 static void rtnl_group_initialize(void)
 {
-	int ret;
-
 	rtnl_group_init = 1;
-	ret = rtnl_hash_initialize(CONF_ETC_DIR "/group",
-				   rtnl_group_hash, 256);
-	if (ret == -ENOENT)
-		rtnl_hash_initialize(CONF_USR_DIR "/group",
-				     rtnl_group_hash, 256);
+	rtnl_hash_initialize_multi("group", rtnl_group_hash, 256);
 }
 
 int rtnl_group_a2n(int *id, const char *arg)
@@ -795,14 +832,8 @@ static int nl_proto_init;
 
 static void nl_proto_initialize(void)
 {
-	int ret;
-
 	nl_proto_init = 1;
-	ret = rtnl_tab_initialize(CONF_ETC_DIR "/nl_protos",
-				  nl_proto_tab, 256);
-	if (ret == -ENOENT)
-		rtnl_tab_initialize(CONF_USR_DIR "/nl_protos",
-				    nl_proto_tab, 256);
+	rtnl_tab_initialize_multi("nl_protos", nl_proto_tab, 256);
 }
 
 const char *nl_proto_n2a(int id, char *buf, int len)
