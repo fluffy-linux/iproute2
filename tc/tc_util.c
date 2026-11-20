@@ -17,10 +17,15 @@
 #include <math.h>
 #include <errno.h>
 
+#include <glob.h>
 #include "utils.h"
 #include "names.h"
 #include "tc_util.h"
 #include "tc_common.h"
+
+#ifndef CONF_VENDOR_DIR
+#define CONF_VENDOR_DIR CONF_USR_DIR
+#endif
 
 #ifndef LIBDIR
 #define LIBDIR "/usr/lib"
@@ -47,9 +52,31 @@ int cls_names_init(char *path)
 		}
 	}
 
-	ret = db_names_load(cls_names, NAMES_DB_ETC);
-	if (ret == -ENOENT)
-		ret = db_names_load(cls_names, NAMES_DB_USR);
+	{
+		glob_t gl;
+		int any_loaded = (path != NULL);
+
+		memset(&gl, 0, sizeof(gl));
+		if (glob(CONF_VENDOR_DIR "/tc_cls:" NAMES_DB_USR ":" NAMES_DB_ETC,
+			 GLOB_PATHS | GLOB_NOESCAPE, NULL, &gl) == 0) {
+			size_t i, j;
+			for (i = 0; i < gl.gl_pathc; i++) {
+				int dup = 0;
+				if (strcmp(gl.gl_pathv[i], ".") == 0)
+					continue;
+				for (j = 0; j < i; j++) {
+					if (strcmp(gl.gl_pathv[i], gl.gl_pathv[j]) == 0) {
+						dup = 1;
+						break;
+					}
+				}
+				if (!dup && db_names_load(cls_names, gl.gl_pathv[i]) == 0)
+					any_loaded = 1;
+			}
+		}
+		globfree(&gl);
+		ret = any_loaded ? 0 : -ENOENT;
+	}
 
 	if (ret) {
 		db_names_free(cls_names);

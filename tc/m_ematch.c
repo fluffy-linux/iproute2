@@ -17,9 +17,14 @@
 #include <stdarg.h>
 #include <errno.h>
 
+#include <glob.h>
 #include "utils.h"
 #include "tc_util.h"
 #include "m_ematch.h"
+
+#ifndef CONF_VENDOR_DIR
+#define CONF_VENDOR_DIR CONF_USR_DIR
+#endif
 
 #define EMATCH_MAP_USR CONF_USR_DIR "/ematch_map"
 #define EMATCH_MAP_ETC CONF_ETC_DIR "/ematch_map"
@@ -164,8 +169,22 @@ static struct ematch_util *get_ematch_kind_num(__u16 kind)
 	int ret;
 
 	ret = lookup_map(kind, name, sizeof(name), EMATCH_MAP_ETC);
-	if (ret == -ENOENT)
-		ret = lookup_map(kind, name, sizeof(name), EMATCH_MAP_USR);
+	if (ret == -ENOENT) {
+		glob_t gl;
+		memset(&gl, 0, sizeof(gl));
+		if (glob(CONF_VENDOR_DIR "/ematch_map:" EMATCH_MAP_USR,
+			 GLOB_PATHS | GLOB_NOESCAPE, NULL, &gl) == 0) {
+			size_t gi;
+			for (gi = gl.gl_pathc; gi > 0; gi--) {
+				if (strcmp(gl.gl_pathv[gi - 1], ".") == 0)
+					continue;
+				ret = lookup_map(kind, name, sizeof(name), gl.gl_pathv[gi - 1]);
+				if (ret == 0)
+					break;
+			}
+		}
+		globfree(&gl);
+	}
 	if (ret < 0)
 		return NULL;
 
@@ -233,8 +252,22 @@ static int parse_tree(struct nlmsghdr *n, struct ematch *tree)
 			}
 
 			err = lookup_map_id(buf, &num, EMATCH_MAP_ETC);
-			if (err == -ENOENT)
-				err = lookup_map_id(buf, &num, EMATCH_MAP_USR);
+			if (err == -ENOENT) {
+				glob_t gl;
+				memset(&gl, 0, sizeof(gl));
+				if (glob(CONF_VENDOR_DIR "/ematch_map:" EMATCH_MAP_USR,
+					 GLOB_PATHS | GLOB_NOESCAPE, NULL, &gl) == 0) {
+					size_t gi;
+					for (gi = gl.gl_pathc; gi > 0; gi--) {
+						if (strcmp(gl.gl_pathv[gi - 1], ".") == 0)
+							continue;
+						err = lookup_map_id(buf, &num, gl.gl_pathv[gi - 1]);
+						if (err == 0)
+							break;
+					}
+				}
+				globfree(&gl);
+			}
 			if (err < 0) {
 				if (err == -ENOENT)
 					map_warning(e->kind_num, buf);
