@@ -5,6 +5,7 @@
  * Authors:	Daniel Borkmann <daniel@iogearbox.net>
  */
 
+#include <paths.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -16,7 +17,7 @@
 #include "bpf_elf.h"
 #include "bpf_scm.h"
 
-#define BPF_DEFAULT_CMD	"/bin/sh"
+#define BPF_DEFAULT_CMD	_PATH_BSHELL
 
 static char *argv_default[] = { BPF_DEFAULT_CMD, NULL };
 
