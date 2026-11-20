@@ -19,6 +19,11 @@
 #include <limits.h>
 #include <assert.h>
 #include <libgen.h>
+#include <glob.h>
+
+#ifndef CONF_VENDOR_DIR
+#define CONF_VENDOR_DIR CONF_USR_DIR
+#endif
 
 #ifdef HAVE_ELF
 #include <libelf.h>
@@ -2880,9 +2885,29 @@ static int bpf_elf_ctx_init(struct bpf_elf_ctx *ctx, const char *pathname,
 	}
 
 	bpf_save_finfo(ctx);
-	bpf_hash_init(ctx, CONF_ETC_DIR "/bpf_pinning");
-	if (ret == -ENOENT)
-		ret = bpf_hash_init(ctx, CONF_USR_DIR "/bpf_pinning");
+	{
+		glob_t gl;
+
+		memset(&gl, 0, sizeof(gl));
+		if (glob(CONF_VENDOR_DIR "/bpf_pinning:" CONF_USR_DIR "/bpf_pinning:" CONF_ETC_DIR "/bpf_pinning",
+			 GLOB_PATHS | GLOB_NOESCAPE, NULL, &gl) == 0) {
+			size_t i, j;
+			for (i = 0; i < gl.gl_pathc; i++) {
+				int dup = 0;
+				if (strcmp(gl.gl_pathv[i], ".") == 0)
+					continue;
+				for (j = 0; j < i; j++) {
+					if (strcmp(gl.gl_pathv[i], gl.gl_pathv[j]) == 0) {
+						dup = 1;
+						break;
+					}
+				}
+				if (!dup)
+					bpf_hash_init(ctx, gl.gl_pathv[i]);
+			}
+		}
+		globfree(&gl);
+	}
 
 	return 0;
 out_free:
