@@ -73,7 +73,7 @@ all: config.mk
 	for i in $(SUBDIRS); \
 	do echo; echo $$i; $(MAKE) -C $$i; done
 
-.PHONY: clean clobber distclean check cscope version
+.PHONY: clean clobber distclean check check-unit cscope version
 
 help:
 	@echo "Make Targets:"
@@ -82,6 +82,7 @@ help:
 	@echo " distclean           - remove configuration and build"
 	@echo " install             - install binaries on local machine"
 	@echo " check               - run tests"
+	@echo " check-unit          - run tests that need no root"
 	@echo " cscope              - build cscope database"
 	@echo " version             - update version"
 	@echo ""
@@ -129,6 +130,9 @@ check: all
 	else \
 		echo "man not installed, skipping checks for syntax errors."; \
 	fi
+
+check-unit:
+	$(MAKE) -C testsuite/unit
 
 cscope:
 	cscope -b -q -R -Iinclude -sip -slib -smisc -snetem -stc
